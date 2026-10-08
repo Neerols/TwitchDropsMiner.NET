@@ -61,8 +61,12 @@ public sealed class Miner
 
     public MinerState State => _state;
 
+    // Restart и Exit «липкие»: обычные переходы состояний не должны их перезаписать
+    private bool _restartRequested;
+
     public void ChangeState(MinerState state)
     {
+        if (state == MinerState.Restart) _restartRequested = true;
         if (_state != MinerState.Exit) _state = state;  // из EXIT выйти нельзя
         _stateChange.Set();
     }
@@ -76,7 +80,12 @@ public sealed class Miner
 
     public void Print(string message) => Ui.Print(message);
 
-    public void Save() => Settings.Save();
+    /// <summary>Сохранение настроек; ошибка записи (файл занят антивирусом и т.п.) не должна валить майнер.</summary>
+    public void Save()
+    {
+        try { Settings.Save(); }
+        catch (Exception ex) { Log.Warning($"Settings save failed: {ex.Message}"); }
+    }
 
     #endregion
 
@@ -121,16 +130,15 @@ public sealed class Miner
     {
         var start = DateTime.UtcNow;
         StopWatching();
-        _runCts?.Cancel();
-        _runCts = null;
+        CancelAndDispose(ref _runCts);
         _watchTask = null;
-        _mntCts?.Cancel();
-        _mntCts = null;
+        CancelAndDispose(ref _mntCts);
         _mntTask = null;
         await Websocket.StopAsync(clearTopics: true);
         _http?.Dispose();
         _http = null;
         _drops.Clear();
+        CampaignsById.Clear();
         foreach (var ch in Channels.Values) ch.Remove();
         Channels.Clear();
         Inventory.Clear();
@@ -141,13 +149,23 @@ public sealed class Miner
         if (wait > TimeSpan.Zero) await Task.Delay(wait);
     }
 
+    private static void CancelAndDispose(ref CancellationTokenSource? cts)
+    {
+        var old = cts;
+        cts = null;
+        if (old is null) return;
+        try { old.Cancel(); } catch (ObjectDisposedException) { }
+        old.Dispose();
+    }
+
     private async Task RunInternalAsync()
     {
         _state = MinerState.Idle;
+        _restartRequested = false;
         await Auth.ValidateAsync(Token);
         await Websocket.StartAsync();
         // цикл просмотра перезапускается при каждом новом запуске
-        _runCts?.Cancel();
+        CancelAndDispose(ref _runCts);
         _runCts = CancellationTokenSource.CreateLinkedTokenSource(Token);
         _watchTask = WatchLoopAsync(_runCts.Token);
         Websocket.AddTopics([
@@ -159,6 +177,7 @@ public sealed class Miner
         while (true)
         {
             Token.ThrowIfCancellationRequested();
+            if (_restartRequested && _state != MinerState.Exit) throw new ReloadRequestException();
             switch (_state)
             {
                 case MinerState.Idle:
@@ -413,7 +432,7 @@ public sealed class Miner
         Ui.SetTrayIcon(TrayIconState.Active);
         Ui.SetWatching(channel);
         WatchingChannel.Set(channel);
-        if (UseBrowserPlayer) Ui.BrowserWatch(channel.Login);
+        Ui.BrowserWatch(UseBrowserPlayer ? channel.Login : null);
         if (updateStatus)
         {
             var text = L.F("status.watching", "Watching: {channel}", ("channel", channel.Name));
@@ -437,25 +456,31 @@ public sealed class Miner
     /// Реальный прогресс с сайта Twitch (через встроенный браузер): API его больше не отдаёт,
     /// а страница инвентаря Twitch получает его со своей integrity-проверкой.
     /// </summary>
-    private async Task SyncSiteProgressAsync()
+    private async Task SyncSiteProgressAsync(CancellationToken ct)
     {
         if (!ClientType.IsWeb(Client) || DateTime.UtcNow - _lastSiteSync < TimeSpan.FromMinutes(5)) return;
         _lastSiteSync = DateTime.UtcNow;
-        var inv = await Ui.FetchSiteInventoryAsync(Token);
+        var inv = await Ui.FetchSiteInventoryAsync(ct);
+        ct.ThrowIfCancellationRequested();  // за время запроса майнер мог перезапуститься
         if (inv is null) { Log.Call("Site inventory: no data"); return; }
         int updated = 0;
+        var touched = new HashSet<DropsCampaign>();
         foreach (var c in inv.Arr("dropCampaignsInProgress"))
         foreach (var d in c.Arr("timeBasedDrops"))
         {
-            if (d.Str("id") is { } id && _drops.TryGetValue(id, out var drop) && d.At("self") is not null)
-            {
-                drop.UpdateMinutes(d.Int("self", "currentMinutesWatched"));
-                updated++;
-                Log.Call($"Drop progress from site: {drop.Name} ({drop.Campaign.Game}, {drop.CurrentMinutes}/{drop.RequiredMinutes})");
-            }
+            if (d.Str("id") is not { } id || !_drops.TryGetValue(id, out var drop) || d.At("self") is null) continue;
+            // у каждого дропа свои минуты — выставляем напрямую, без «дельты на всю кампанию»
+            if (drop.SetRealMinutes(d.Int("self", "currentMinutesWatched"), d.Bool("self", "isClaimed")))
+                touched.Add(drop.Campaign);
+            updated++;
         }
-        if (updated == 0) Log.Call("Site inventory: no campaigns in progress");
+        foreach (var campaign in touched) campaign.FirstDrop?.Display();
+        _lastRealSync = DateTime.Now;
+        Ui.SetDiagnostics(null, _lastRealSync);
+        Log.Call(updated == 0 ? "Site inventory: no campaigns in progress" : $"Site inventory: {updated} drops synced");
     }
+
+    private DateTime? _lastRealSync;
 
     public void RestartWatching()
     {
@@ -463,10 +488,13 @@ public sealed class Miner
         _watchingRestart.Set();
     }
 
+    private (string, int) _lastPrinted;
+
     public void DisplayDrop(TimedDrop drop, bool countdown = true, bool subOne = false)
     {
-        if (Progress.Display(drop, countdown, subOne))
+        if (Progress.Display(drop, countdown, subOne) && _lastPrinted != (drop.Id, drop.CurrentMinutes))
         {
+            _lastPrinted = (drop.Id, drop.CurrentMinutes);
             Print($"{L.T("gui.progress.campaign_progress", "Progress:")} {drop.CurrentMinutes}/{drop.RequiredMinutes} - {drop.Campaign.Game.Name}, {drop.Campaign.Name}");
         }
         Ui.DisplayDrop(drop);
@@ -498,25 +526,21 @@ public sealed class Miner
                 bool ok = await channel.SendWatchAsync();
                 var lastSent = DateTime.UtcNow;
                 if (!ok) Log.Call($"Watch requested failed for channel: {channel.Name}");
-                bool hls = await channel.SendPlaylistWatchAsync();
-                Log.Call($"HLS segment request for {channel.Name}: {(hls ? "OK" : "failed")}");
                 await Task.Delay(TimeSpan.FromSeconds(20), ct);
-                await channel.SendPlaylistWatchAsync();
-                if (UseBrowserPlayer) Log.Call($"Browser player state: {await Ui.BrowserPlayerStateAsync() ?? "-"}");
-                await SyncSiteProgressAsync();
+                if (UseBrowserPlayer)
+                {
+                    var state = await Ui.PlayerTickAsync();
+                    Log.Call($"Browser player state: {state}");
+                    Ui.SetDiagnostics(state, _lastRealSync);
+                }
+                await SyncSiteProgressAsync(ct);
                 if (Progress.MinuteAlmostDone())
                 {
                     await UpdateProgressFallbackAsync(channel);
                 }
-                // оставшееся время до следующей минуты: сегмент потока каждые ~20 с
+                double elapsed = (DateTime.UtcNow - lastSent).TotalSeconds;
                 _watchingRestart.Clear();
-                while (true)
-                {
-                    double left = interval - (DateTime.UtcNow - lastSent).TotalSeconds;
-                    if (left <= 0) break;
-                    if (await _watchingRestart.WaitAsync(TimeSpan.FromSeconds(Math.Min(20, left)), ct)) break;
-                    if (left > 20 && WatchingChannel.Value == channel) await channel.SendPlaylistWatchAsync();
-                }
+                await _watchingRestart.WaitAsync(TimeSpan.FromSeconds(interval - Math.Min(elapsed, interval)), ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -936,6 +960,7 @@ public sealed class Miner
             .ToList();
 
         _drops.Clear();
+        CampaignsById.Clear();
         Ui.InventoryClear();
         Inventory.Clear();
         _mntTriggers.Clear();
@@ -959,7 +984,7 @@ public sealed class Miner
         var now = DateTimeOffset.UtcNow;
         _mntTriggers.AddRange(triggers.Where(t => t > now).OrderBy(t => t));
         // задача обслуживания перезапускается после каждой загрузки инвентаря
-        _mntCts?.Cancel();
+        CancelAndDispose(ref _mntCts);
         _mntCts = CancellationTokenSource.CreateLinkedTokenSource(Token);
         _mntTask = MaintenanceAsync(_mntCts.Token);
     }

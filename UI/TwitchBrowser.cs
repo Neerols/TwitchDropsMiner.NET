@@ -9,9 +9,10 @@ namespace TwitchDropsMiner.UI;
 /// <summary>
 /// Встроенный браузер (WebView2 = Microsoft Edge) с отдельным постоянным профилем в папке данных.
 /// 1) Вход: пользователь сам входит на twitch.tv, мы забираем cookie auth-token и unique_id.
-/// 2) Integrity: в скрытом окне открываем страницу кампаний и перехватываем integrity-токен,
-///    который получает сам сайт Twitch.
+/// 2) Служебный скрытый браузер: integrity-токен и реальный прогресс со страницы инвентаря.
+/// 3) Плеер: скрытое окно, которое «смотрит» стрим без звука в 160p (под надзором).
 /// Логин и пароль вводятся только на сайте Twitch и приложению не передаются.
+/// Все методы вызываются в UI-потоке.
 /// </summary>
 public static class TwitchBrowser
 {
@@ -19,10 +20,13 @@ public static class TwitchBrowser
     private static string ProfileDir => Path.Combine(AppPaths.DataDir, "browser");
 
     // Облегчённый режим: без GPU, расширений и фоновых сервисов, не больше 2 процессов отрисовки,
-    // ограниченная память JS — скрытому плееру на 160p этого достаточно.
+    // ограниченная память JS. Скрытые окна не должны «засыпать»: отключаем фоновое троттлинг.
     private const string BrowserArgs =
         "--disable-gpu --disable-gpu-compositing --disable-extensions --disable-background-networking " +
-        "--disable-component-update --disable-sync --disable-features=Translate,MediaRouter,OptimizationHints " +
+        "--disable-component-update --disable-sync " +
+        "--disable-features=Translate,MediaRouter,OptimizationHints,CalculateNativeWinOcclusion " +
+        "--disable-background-timer-throttling --disable-renderer-backgrounding " +
+        "--disable-backgrounding-occluded-windows " +
         "--renderer-process-limit=2 --js-flags=--max-old-space-size=256 --mute-audio " +
         "--autoplay-policy=no-user-gesture-required";
 
@@ -73,8 +77,22 @@ public static class TwitchBrowser
             window.Height = 700;
         }
         window.Show();
-        await view.EnsureCoreWebView2Async(await EnvAsync());
+        try
+        {
+            await view.EnsureCoreWebView2Async(await EnvAsync());
+        }
+        catch
+        {
+            Destroy(window, view);
+            throw;
+        }
         return (window, view);
+    }
+
+    private static void Destroy(Window? window, WebView2? view)
+    {
+        try { view?.Dispose(); } catch { /* уже освобождён */ }
+        try { window?.Close(); } catch { /* уже закрыт */ }
     }
 
     private static async Task<(string? token, string? deviceId)> ReadCookiesAsync(CoreWebView2 core)
@@ -85,13 +103,19 @@ public static class TwitchBrowser
         return (string.IsNullOrEmpty(token) ? null : token, device);
     }
 
-    /// <summary>Показать окно входа. Возвращает null, если пользователь закрыл окно.</summary>
-    public static async Task<(string token, string? deviceId, string userAgent)?> LoginAsync(Window? owner)
+    #region Вход и выход
+
+    /// <summary>
+    /// Показать окно входа. Возвращает null, если пользователь закрыл окно.
+    /// Токен rejectedToken (уже отклонённый Twitch) не возвращается — ждём нового входа.
+    /// </summary>
+    public static async Task<(string token, string? deviceId, string userAgent)?> LoginAsync(Window? owner, string? rejectedToken = null)
     {
         var (window, view) = await CreateAsync(visible: true, owner);
         var core = view.CoreWebView2;
         var closed = new TaskCompletionSource();
         window.Closed += (_, _) => closed.TrySetResult();
+        if (rejectedToken is not null) await DeleteSessionCookiesAsync(core);
         core.Navigate("https://www.twitch.tv/login");
         try
         {
@@ -100,183 +124,111 @@ public static class TwitchBrowser
                 await Task.WhenAny(Task.Delay(1000), closed.Task);
                 if (closed.Task.IsCompleted) break;
                 var (token, device) = await ReadCookiesAsync(core);
-                if (token is not null)
+                if (token is not null && token != rejectedToken)
                     return (token, device, core.Settings.UserAgent);
             }
             return null;
         }
         finally
         {
-            if (!closed.Task.IsCompleted) window.Close();
+            if (!closed.Task.IsCompleted) Destroy(window, view);
         }
     }
 
-    /// <summary>
-    /// Открывает страницу twitch.tv в скрытом окне и собирает GQL-запросы/ответы, которые делает сам сайт
-    /// (тело запроса содержит одну из операций из filter). Используется для получения данных,
-    /// которые Twitch отдаёт только своему сайту (например, реальный прогресс дропов).
-    /// </summary>
-    public static async Task<List<(string request, string response)>> CaptureGqlAsync(
-        string pageUrl, string[] filter, TimeSpan timeout, CancellationToken ct)
+    private static async Task DeleteSessionCookiesAsync(CoreWebView2 core)
     {
+        foreach (var c in await core.CookieManager.GetCookiesAsync("https://www.twitch.tv"))
+            if (c.Name is "auth-token" or "persistent" or "login" or "name" or "twilight-user" or "api_token")
+                core.CookieManager.DeleteCookie(c);
+    }
+
+    /// <summary>Удалить сессию Twitch из профиля браузера (выход или отклонённый токен).</summary>
+    public static async Task ClearSessionAsync()
+    {
+        await WatchAsync(null);
+        var core = await ServiceCoreAsync();
+        await DeleteSessionCookiesAsync(core);
+        _integrityToken = null;
+        Log.Info("Browser session cleared");
+    }
+
+    #endregion
+
+    #region Служебный скрытый браузер (integrity и инвентарь)
+
+    private static Window? _serviceWindow;
+    private static WebView2? _serviceView;
+    private static readonly SemaphoreSlim _serviceLock = new(1, 1);
+    private static string? _integrityToken;
+
+    private static async Task<CoreWebView2> ServiceCoreAsync()
+    {
+        if (_serviceView?.CoreWebView2 is { } existing) return existing;
         var (window, view) = await CreateAsync(visible: false, null);
+        _serviceWindow = window;
+        _serviceView = view;
         var core = view.CoreWebView2;
-        var captured = new List<(string, string)>();
+        core.IsMuted = true;
+        core.AddWebResourceRequestedFilter("https://gql.twitch.tv/*", CoreWebView2WebResourceContext.All);
+        // сайт сам получает integrity-токен — запоминаем его из заголовков запросов
+        core.WebResourceRequested += (_, e) =>
+        {
+            try
+            {
+                if (e.Request.Headers.Contains("Client-Integrity")
+                    && e.Request.Headers.GetHeader("Client-Integrity") is { Length: > 0 } v)
+                    _integrityToken = v;
+            }
+            catch { /* заголовка нет */ }
+        };
+        core.ProcessFailed += (_, e) =>
+        {
+            Log.Warning($"Service browser process failed: {e.ProcessFailedKind}");
+            var (w, v) = (_serviceWindow, _serviceView);
+            _serviceWindow = null;
+            _serviceView = null;
+            Destroy(w, v);
+        };
+        return core;
+    }
+
+    /// <summary>
+    /// Открывает страницу в служебном браузере и ждёт первый GQL-ответ, на котором accept вернёт результат.
+    /// После этого страница выгружается (about:blank), чтобы не держать в памяти SPA Twitch.
+    /// </summary>
+    private static async Task<T?> CaptureAsync<T>(string pageUrl, Func<string, string, T?> accept, TimeSpan timeout, CancellationToken ct)
+        where T : class
+    {
+        await _serviceLock.WaitAsync(ct);
+        CoreWebView2? core = null;
+        EventHandler<CoreWebView2WebResourceResponseReceivedEventArgs>? handler = null;
         try
         {
-            core.AddWebResourceRequestedFilter("https://gql.twitch.tv/*", CoreWebView2WebResourceContext.All);
-            core.WebResourceResponseReceived += async (_, e) =>
+            core = await ServiceCoreAsync();
+            var result = new TaskCompletionSource<T?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            handler = async (_, e) =>
             {
                 try
                 {
-                    if (!e.Request.Uri.StartsWith("https://gql.twitch.tv/gql", StringComparison.OrdinalIgnoreCase)) return;
+                    var uri = e.Request.Uri;
+                    if (!uri.StartsWith("https://gql.twitch.tv/", StringComparison.OrdinalIgnoreCase)) return;
                     string req = "";
                     if (e.Request.Content is { } rs)
                     {
                         using var sr = new StreamReader(rs);
                         req = await sr.ReadToEndAsync();
                     }
-                    if (filter.Length > 0 && !filter.Any(f => req.Contains(f, StringComparison.Ordinal))) return;
                     using var body = await e.Response.GetContentAsync();
                     if (body is null) return;
                     using var br = new StreamReader(body);
                     var resp = await br.ReadToEndAsync();
-                    lock (captured) captured.Add((req, resp));
+                    if (accept(uri + "\n" + req, resp) is { } value) result.TrySetResult(value);
                 }
                 catch { /* тело недоступно */ }
             };
+            core.WebResourceResponseReceived += handler;
             core.Navigate(pageUrl);
-            await Task.Delay(timeout, ct);
-            lock (captured) return captured.ToList();
-        }
-        catch (OperationCanceledException)
-        {
-            lock (captured) return captured.ToList();
-        }
-        finally
-        {
-            window.Close();
-        }
-    }
-
-    #region Просмотр настоящим плеером
-
-    private static Window? _watchWindow;
-    private static WebView2? _watchView;
-    private static string? _watchLogin;
-
-    /// <summary>
-    /// Смотреть канал настоящим плеером Twitch в скрытом окне: без звука, качество 160p.
-    /// null — остановить просмотр.
-    /// </summary>
-    public static async Task WatchAsync(string? login)
-    {
-        if (login == _watchLogin && _watchView is not null) return;
-        _watchLogin = login;
-        if (login is null)
-        {
-            _watchWindow?.Close();
-            _watchWindow = null;
-            _watchView = null;
-            return;
-        }
-        if (_watchView is null)
-        {
-            var (window, view) = await CreateAsync(visible: false, null);
-            _watchWindow = window;
-            _watchView = view;
-            var core = view.CoreWebView2;
-            core.IsMuted = true;
-            // до загрузки страниц Twitch: минимальное качество и выключенный звук плеера
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(
-                "try{localStorage.setItem('video-quality','{\"default\":\"160p30\"}');" +
-                "localStorage.setItem('video-muted','{\"default\":true}');" +
-                "localStorage.setItem('volume','0');" +
-                "localStorage.setItem('mature','true');}catch(e){}");
-        }
-        _watchView!.CoreWebView2.Navigate($"https://www.twitch.tv/{login}");
-        Log.Info($"Browser player: watching {login}");
-    }
-
-    /// <summary>Состояние видео в скрытом плеере: «paused,currentTime,height» или null.</summary>
-    public static async Task<string?> PlayerStateAsync()
-    {
-        if (_watchView?.CoreWebView2 is not { } core) return null;
-        try
-        {
-            var r = await core.ExecuteScriptAsync(
-                "(()=>{const v=document.querySelector('video');if(!v)return 'no-video';" +
-                "if(v.paused){v.muted=true;v.play().catch(()=>{});}" +
-                "return [v.paused?'paused':'playing',Math.round(v.currentTime),v.videoHeight].join(',');})()");
-            return r.Trim('"');
-        }
-        catch { return null; }
-    }
-
-    /// <summary>Реальный прогресс с сайта Twitch: ответ Inventory, который запрашивает страница инвентаря.</summary>
-    public static async Task<JsonNode?> FetchSiteInventoryAsync(CancellationToken ct)
-    {
-        var items = await CaptureGqlAsync("https://www.twitch.tv/drops/inventory", ["\"Inventory\""], TimeSpan.FromSeconds(20), ct);
-        foreach (var (_, resp) in items)
-        {
-            JsonNode? node;
-            try { node = JsonNode.Parse(resp); } catch { continue; }
-            IEnumerable<JsonNode?> list = node is JsonArray a ? a : [node];
-            foreach (var r in list)
-                if (r.At("data", "currentUser", "inventory") is { } inv) return inv;
-        }
-        return null;
-    }
-
-    #endregion
-
-    /// <summary>Есть ли в профиле браузера сохранённый вход.</summary>
-    public static async Task<bool> HasSessionAsync()
-    {
-        if (!Directory.Exists(ProfileDir)) return false;
-        var (window, view) = await CreateAsync(visible: false, null);
-        try { return (await ReadCookiesAsync(view.CoreWebView2)).token is not null; }
-        finally { window.Close(); }
-    }
-
-    /// <summary>
-    /// Открывает страницу кампаний в скрытом окне и перехватывает integrity-токен,
-    /// который запрашивает сам сайт (ответ /integrity или заголовок Client-Integrity).
-    /// </summary>
-    public static async Task<string?> GetIntegrityTokenAsync(CancellationToken ct)
-    {
-        var (window, view) = await CreateAsync(visible: false, null);
-        var core = view.CoreWebView2;
-        var result = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        try
-        {
-            core.AddWebResourceRequestedFilter("https://gql.twitch.tv/*", CoreWebView2WebResourceContext.All);
-            core.WebResourceRequested += (_, e) =>
-            {
-                try
-                {
-                    if (e.Request.Headers.Contains("Client-Integrity"))
-                    {
-                        var value = e.Request.Headers.GetHeader("Client-Integrity");
-                        if (!string.IsNullOrEmpty(value)) result.TrySetResult(value);
-                    }
-                }
-                catch { /* заголовка нет */ }
-            };
-            core.WebResourceResponseReceived += async (_, e) =>
-            {
-                try
-                {
-                    if (!e.Request.Uri.StartsWith("https://gql.twitch.tv/integrity", StringComparison.OrdinalIgnoreCase)) return;
-                    using var stream = await e.Response.GetContentAsync();
-                    if (stream is null) return;
-                    var json = await JsonNode.ParseAsync(stream);
-                    if (json.Str("token") is { Length: > 0 } token) result.TrySetResult(token);
-                }
-                catch { /* тело недоступно — ждём заголовок */ }
-            };
-            core.Navigate("https://www.twitch.tv/drops/campaigns");
-            var done = await Task.WhenAny(result.Task, Task.Delay(TimeSpan.FromSeconds(60), ct));
+            var done = await Task.WhenAny(result.Task, Task.Delay(timeout, ct));
             return done == result.Task ? result.Task.Result : null;
         }
         catch (OperationCanceledException)
@@ -285,7 +237,158 @@ public static class TwitchBrowser
         }
         finally
         {
-            window.Close();
+            if (core is not null)
+            {
+                if (handler is not null) core.WebResourceResponseReceived -= handler;
+                try { core.Navigate("about:blank"); } catch { /* браузер уже закрыт */ }
+            }
+            _serviceLock.Release();
         }
     }
+
+    /// <summary>Integrity-токен, который получает сам сайт (ответ /integrity или заголовок Client-Integrity).</summary>
+    public static async Task<string?> GetIntegrityTokenAsync(CancellationToken ct)
+    {
+        _integrityToken = null;
+        var token = await CaptureAsync("https://www.twitch.tv/drops/campaigns", (request, response) =>
+        {
+            if (request.StartsWith("https://gql.twitch.tv/integrity", StringComparison.OrdinalIgnoreCase))
+            {
+                try { return JsonNode.Parse(response).Str("token") is { Length: > 0 } t ? t : null; }
+                catch { return null; }
+            }
+            return _integrityToken;  // заголовок из любого запроса сайта
+        }, TimeSpan.FromSeconds(45), ct);
+        return token ?? _integrityToken;
+    }
+
+    /// <summary>Реальный прогресс с сайта Twitch: ответ Inventory, который запрашивает страница инвентаря.</summary>
+    public static Task<JsonNode?> FetchSiteInventoryAsync(CancellationToken ct) =>
+        CaptureAsync<JsonNode>("https://www.twitch.tv/drops/inventory", (request, response) =>
+        {
+            if (!request.Contains("\"Inventory\"", StringComparison.Ordinal)) return null;
+            JsonNode? node;
+            try { node = JsonNode.Parse(response); } catch { return null; }
+            IEnumerable<JsonNode?> list = node is JsonArray a ? a : [node];
+            foreach (var r in list)
+                if (r.At("data", "currentUser", "inventory") is { } inv) return inv.DeepClone();
+            return null;
+        }, TimeSpan.FromSeconds(30), ct);
+
+    #endregion
+
+    #region Плеер (под надзором)
+
+    private static Window? _watchWindow;
+    private static WebView2? _watchView;
+    private static string? _watchLogin;     // что сейчас загружено в плеер
+    private static string? _wantedLogin;    // что должно быть загружено
+    private static DateTime _loadedAt;
+    private static int _badTicks;
+    private static readonly SemaphoreSlim _watchLock = new(1, 1);
+    private static readonly TimeSpan PlannedReload = TimeSpan.FromHours(3);
+
+    /// <summary>Смотреть канал настоящим плеером в скрытом окне (без звука, 160p). null — остановить.</summary>
+    public static async Task WatchAsync(string? login)
+    {
+        _wantedLogin = login;
+        await _watchLock.WaitAsync();
+        try
+        {
+            await ApplyWantedAsync(forceReload: false);
+        }
+        finally { _watchLock.Release(); }
+    }
+
+    private static async Task ApplyWantedAsync(bool forceReload)
+    {
+        var login = _wantedLogin;
+        if (login is null)
+        {
+            if (_watchView is not null) Log.Info("Browser player: stopped");
+            DestroyPlayer();
+            return;
+        }
+        if (!forceReload && login == _watchLogin && _watchView?.CoreWebView2 is not null) return;
+        if (_watchView?.CoreWebView2 is null)
+        {
+            DestroyPlayer();
+            var (window, view) = await CreateAsync(visible: false, null);
+            _watchWindow = window;
+            _watchView = view;
+            var core = view.CoreWebView2;
+            core.IsMuted = true;
+            core.ProcessFailed += (_, e) =>
+            {
+                Log.Warning($"Browser player process failed: {e.ProcessFailedKind}");
+                DestroyPlayer();  // восстановится на следующей проверке
+            };
+            // до загрузки страниц Twitch: минимальное качество и выключенный звук плеера
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(
+                "try{localStorage.setItem('video-quality','{\"default\":\"160p30\"}');" +
+                "localStorage.setItem('video-muted','{\"default\":true}');" +
+                "localStorage.setItem('volume','0');" +
+                "localStorage.setItem('mature','true');}catch(e){}");
+            // пока создавали окно, канал могли сменить или остановить
+            login = _wantedLogin;
+            if (login is null) { DestroyPlayer(); return; }
+        }
+        _watchView!.CoreWebView2.Navigate($"https://www.twitch.tv/{login}");
+        _watchLogin = login;
+        _loadedAt = DateTime.UtcNow;
+        _badTicks = 0;
+        Log.Info($"Browser player: watching {login}");
+    }
+
+    private static void DestroyPlayer()
+    {
+        var (w, v) = (_watchWindow, _watchView);
+        _watchWindow = null;
+        _watchView = null;
+        _watchLogin = null;
+        Destroy(w, v);
+    }
+
+    /// <summary>
+    /// Проверка плеера (раз в минуту): если видео нет или оно стоит 3 проверки подряд, процесс упал
+    /// или плеер работает дольше 3 часов — перезагружаем. Возвращает состояние для интерфейса.
+    /// </summary>
+    public static async Task<string> PlayerTickAsync()
+    {
+        if (_wantedLogin is null) return "off";
+        await _watchLock.WaitAsync();
+        try
+        {
+            if (_watchView?.CoreWebView2 is not { } core)
+            {
+                Log.Warning("Browser player is not running, restarting");
+                await ApplyWantedAsync(forceReload: true);
+                return "restarting";
+            }
+            string state;
+            try
+            {
+                var r = await core.ExecuteScriptAsync(
+                    "(()=>{const v=document.querySelector('video');if(!v)return 'no-video';" +
+                    "if(v.paused){v.muted=true;v.play().catch(()=>{});}" +
+                    "return [v.paused?'paused':'playing',Math.round(v.currentTime),v.videoHeight].join(',');})()");
+                state = r.Trim('"');
+            }
+            catch (Exception ex)
+            {
+                state = "error: " + ex.Message;
+            }
+            _badTicks = state.StartsWith("playing") ? 0 : _badTicks + 1;
+            if (_badTicks >= 3 || DateTime.UtcNow - _loadedAt > PlannedReload)
+            {
+                Log.Warning($"Browser player reload ({(_badTicks >= 3 ? "not playing: " + state : "planned")})");
+                await ApplyWantedAsync(forceReload: true);
+                return "restarting";
+            }
+            return state;
+        }
+        finally { _watchLock.Release(); }
+    }
+
+    #endregion
 }

@@ -35,7 +35,12 @@ public interface IMinerUi
 
     /// <summary>Смотреть канал настоящим плеером во встроенном браузере (null — остановить).</summary>
     void BrowserWatch(string? login);
-    Task<string?> BrowserPlayerStateAsync();
+    /// <summary>Проверка и восстановление плеера; возвращает его состояние.</summary>
+    Task<string> PlayerTickAsync();
+    /// <summary>Удалить сессию Twitch из профиля встроенного браузера.</summary>
+    Task ClearBrowserSessionAsync();
+    /// <summary>Строка диагностики: состояние плеера (null — без изменений) и время последней реальной синхронизации.</summary>
+    void SetDiagnostics(string? playerState, DateTime? lastSync);
 
     /// <summary>Инвентарь, который сайт Twitch получает на странице drops/inventory (реальный прогресс).</summary>
     Task<System.Text.Json.Nodes.JsonNode?> FetchSiteInventoryAsync(CancellationToken ct);

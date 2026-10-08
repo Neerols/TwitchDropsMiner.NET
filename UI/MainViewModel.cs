@@ -177,8 +177,11 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
 
     public void GrabAttention() => OnUi(() => ShowWindowAction?.Invoke());
 
+    private long? _reselectChannelId;
+
     public void ChannelsClear()
     {
+        _reselectChannelId = SelectedChannel?.Id;  // вернём выделение, если канал снова попадёт в список
         Channels.Clear();
         _channelRows.Clear();
         SelectedChannel = null;
@@ -192,6 +195,7 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
             row = new ChannelRow { Id = channel.Id };
             _channelRows[channel.Id] = row;
             Channels.Add(row);
+            if (_reselectChannelId == channel.Id) SelectedChannel = row;
         }
         row.Name = channel.Name;
         (row.Status, row.StatusKind) = channel.Online
@@ -526,7 +530,42 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
     /// <summary>Открыть окно входа через браузер (вызывается ядром, когда вход не выполнен).</summary>
     public void RequestBrowserLogin() => OnUi(async () => await BrowserLoginAsync());
 
-    public async Task<string?> BrowserPlayerStateAsync() => await TwitchBrowser.PlayerStateAsync();
+    public async Task<string> PlayerTickAsync()
+    {
+        try { return await TwitchBrowser.PlayerTickAsync(); }
+        catch (Exception ex)
+        {
+            Log.Warning($"Browser player check failed: {ex.Message}");
+            return "error";
+        }
+    }
+
+    public async Task ClearBrowserSessionAsync()
+    {
+        try { await TwitchBrowser.ClearSessionAsync(); }
+        catch (Exception ex) { Log.Warning($"Browser session clear failed: {ex.Message}"); }
+    }
+
+    private string _playerState = "-";
+    private DateTime? _lastSync;
+    private string _diagnostics = "";
+    /// <summary>«Плеер: играет · реальный прогресс: 00:05».</summary>
+    public string Diagnostics { get => _diagnostics; set => Set(ref _diagnostics, value); }
+
+    public void SetDiagnostics(string? playerState, DateTime? lastSync) => OnUi(() =>
+    {
+        if (playerState is not null) _playerState = playerState;
+        if (lastSync is not null) _lastSync = lastSync;
+        string player = _playerState switch
+        {
+            var s when s.StartsWith("playing") => L.T("x.diag.playing", "playing"),
+            "restarting" => L.T("x.diag.restarting", "restarting"),
+            "off" or "-" => L.T("x.diag.off", "off"),
+            _ => L.T("x.diag.problem", "not playing"),
+        };
+        var sync = _lastSync is { } t ? t.ToString("HH:mm") : "—";
+        Diagnostics = L.F("x.diag.line", "Player: {player} · real progress: {sync}", ("player", player), ("sync", sync));
+    });
 
     public async Task<System.Text.Json.Nodes.JsonNode?> FetchSiteInventoryAsync(CancellationToken ct)
     {

@@ -68,15 +68,15 @@
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="190" />
+                        <ColumnDefinition Width="175" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <Border Width="54" Height="72" CornerRadius="4" ClipToBounds="True" VerticalAlignment="Top"
+                    <Border Width="45" Height="60" CornerRadius="4" ClipToBounds="True" VerticalAlignment="Top"
                             Background="{DynamicResource ControlFillColorSecondaryBrush}">
                         <Image Source="{Binding Image}" Stretch="UniformToFill" />
                     </Border>
                     <StackPanel Grid.Column="1" Margin="8,0">
-                        <TextBlock Text="{Binding GameName}" FontWeight="Bold" FontSize="15" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding GameName}" FontWeight="Bold" FontSize="14" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Name}" Opacity="0.9" TextWrapping="Wrap" FontSize="13" />
                         <TextBlock Text="{Binding StatusText}" FontSize="13" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
                         <TextBlock Text="{Binding TimeText}" ToolTip="{Binding TimeTooltip}" FontSize="12" Opacity="0.85" />
@@ -94,7 +94,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type ui:DropView}">
-                                <Border x:Name="DropCard" CornerRadius="5" BorderThickness="1" Padding="5" Margin="0,0,6,6" Width="176"
+                                <Border x:Name="DropCard" CornerRadius="5" BorderThickness="1" Padding="5" Margin="0,0,5,5" Width="134"
                                         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
                                     <StackPanel>
                                         <ItemsControl ItemsSource="{Binding Benefits}" HorizontalAlignment="Center">
@@ -103,16 +103,16 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type ui:BenefitView}">
-                                                    <StackPanel Width="160" Margin="1" ToolTip="{Binding Name}">
-                                                        <Image Source="{Binding Image}" Width="44" Height="44" />
-                                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" FontSize="12.5"
-                                                                   FontWeight="SemiBold" MaxHeight="36" TextTrimming="CharacterEllipsis" />
+                                                    <StackPanel Width="124" Margin="1" ToolTip="{Binding Name}">
+                                                        <Image Source="{Binding Image}" Width="34" Height="34" />
+                                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" FontSize="11.5"
+                                                                   FontWeight="SemiBold" MaxHeight="30" TextTrimming="CharacterEllipsis" />
                                                     </StackPanel>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
                                         <ProgressBar Maximum="1" Value="{Binding Progress, Mode=OneWay}" Height="5" Margin="0,4" />
-                                        <TextBlock Text="{Binding ProgressText}" TextAlignment="Center" TextWrapping="Wrap" FontSize="12"
+                                        <TextBlock Text="{Binding ProgressText}" TextAlignment="Center" TextWrapping="Wrap" FontSize="11"
                                                    Foreground="{Binding ProgressKind, Converter={StaticResource StatusBrush}}" />
                                     </StackPanel>
                                 </Border>
@@ -240,6 +240,8 @@
                                             <TextBlock Text="  ·  ID " Opacity="0.7" />
                                             <TextBlock Text="{Binding UserIdText}" />
                                         </StackPanel>
+                                        <TextBlock Text="{Binding Diagnostics}" Opacity="0.75" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                   ToolTip="{ui:Tr x.diag.hint}" />
                                         <WrapPanel Margin="0,6,0,0">
                                             <Button Content="{ui:Tr x.browser.button}" Command="{Binding BrowserLoginCommand}"
                                                     Style="{StaticResource AccentButtonStyle}" Margin="0,0,6,6" ToolTip="{ui:Tr x.browser.hint}" />

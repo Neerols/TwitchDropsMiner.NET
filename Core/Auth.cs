@@ -111,22 +111,27 @@ public sealed class AuthState(Miner miner)
     private DateTime _integrityAt;
     private TaskCompletionSource<(string token, string? deviceId, string userAgent)>? _browserLogin;
 
-    /// <summary>Получить (или обновить) integrity-токен для веб-клиента. Для других клиентов — no-op.</summary>
-    private readonly SemaphoreSlim _integrityLock = new(1, 1);
+    private Task? _integrityTask;
+    private DateTime _integrityFailedAt = DateTime.MinValue;
+    private static readonly TimeSpan IntegrityLifetime = TimeSpan.FromHours(4);
+    private static readonly TimeSpan IntegrityRetryPause = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// Получить (или обновить) integrity-токен. Все одновременные запросы ждут одну общую попытку;
+    /// после неудачи новая попытка — не раньше чем через 10 минут (а не на каждый GQL-запрос).
+    /// </summary>
     public async Task EnsureIntegrityAsync(bool force)
     {
         if (!ClientType.IsWeb(miner.Client)) return;
-        if (!force && IntegrityToken is not null && DateTime.UtcNow - _integrityAt < TimeSpan.FromHours(4)) return;
-        var requestedAt = DateTime.UtcNow;
-        await _integrityLock.WaitAsync(miner.Token);
-        try
+        bool fresh = IntegrityToken is not null && DateTime.UtcNow - _integrityAt < IntegrityLifetime;
+        if (fresh && !force) return;
+        if (_integrityTask is null)
         {
-            // пока ждали блокировку, токен мог обновить другой запрос
-            if (_integrityAt >= requestedAt && IntegrityToken is not null) return;
-            await FetchIntegrityAsync();
+            if (DateTime.UtcNow - _integrityFailedAt < IntegrityRetryPause) return;
+            _integrityTask = FetchIntegrityAsync();
         }
-        finally { _integrityLock.Release(); }
+        try { await _integrityTask.WaitAsync(miner.Token); }
+        finally { if (_integrityTask?.IsCompleted == true) _integrityTask = null; }
     }
 
     private async Task FetchIntegrityAsync()
@@ -134,11 +139,13 @@ public sealed class AuthState(Miner miner)
         var token = await miner.Ui.GetIntegrityTokenAsync(miner.Token);
         if (token is null)
         {
-            Log.Warning("Не удалось получить integrity-токен из браузера");
+            _integrityFailedAt = DateTime.UtcNow;
+            Log.Warning("Не удалось получить integrity-токен из браузера, следующая попытка через 10 минут");
             return;
         }
         IntegrityToken = token;
         _integrityAt = DateTime.UtcNow;
+        _integrityFailedAt = DateTime.MinValue;
         Log.Info("Integrity-токен получен");
     }
 
@@ -211,9 +218,10 @@ public sealed class AuthState(Miner miner)
                     break;
                 }
                 if (status is not (200 or 401)) throw new MinerException($"Login verification failure (HTTP {status})");
-                // токен недействителен или выдан не веб-клиенту — нужен новый вход
+                // токен недействителен или выдан не веб-клиенту — очищаем сессию в браузере и входим заново
                 Log.Info("Saved session is invalid");
                 AccessToken = null;
+                await miner.Ui.ClearBrowserSessionAsync();
             }
             if (validate is null) throw new MinerException("Login verification failure");
             UserId = validate.Long("user_id");
@@ -239,7 +247,6 @@ public sealed class AuthState(Miner miner)
         miner.Ui.SetLoginStatus(L.T("gui.login.required", "Login required"), null);
         miner.Ui.SetStatus(L.T("gui.login.required", "Login required"));
         miner.Ui.GrabAttention();
-        miner.Print(L.T("x.login.browser_request", "Log in to Twitch in the opened window (button \"Log in with browser\")."));
         miner.Ui.RequestBrowserLogin();
         var (token, deviceId, userAgent) = await _browserLogin.Task.WaitAsync(miner.Token);
         miner.Client = ClientType.Web.WithUserAgent(userAgent);
@@ -251,11 +258,18 @@ public sealed class AuthState(Miner miner)
     /// <summary>Выход: отзыв токена на стороне Twitch и удаление сохранённой авторизации.</summary>
     public async Task RevokeAsync()
     {
-        if (AccessToken is null) return;
+        if (AccessToken is null)
+        {
+            Invalidate(deleteStored: true);
+            await miner.Ui.ClearBrowserSessionAsync();
+            return;
+        }
         var token = AccessToken;
         var r = await miner.Http.RequestAsync(HttpMethod.Post, "https://id.twitch.tv/oauth2/revoke",
             () => new FormUrlEncodedContent([new("client_id", miner.Client.ClientId), new("token", token)]));
-        if (r.Status == 200) Invalidate(deleteStored: true);
-        else Log.Error($"Failed to invalidate the auth token: {r.Status}");
+        if (r.Status != 200) Log.Error($"Failed to invalidate the auth token: {r.Status}");
+        // локально выходим в любом случае: удаляем файл входа и сессию в браузере
+        Invalidate(deleteStored: true);
+        await miner.Ui.ClearBrowserSessionAsync();
     }
 }

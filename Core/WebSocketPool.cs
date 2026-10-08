@@ -35,6 +35,8 @@ public sealed class TwitchWebSocket
     public Dictionary<string, WsTopic> Topics { get; } = new();
     private readonly HashSet<WsTopic> _submitted = new();
 
+    public int Index => _idx;
+
     public TwitchWebSocket(Miner miner, int index)
     {
         _miner = miner;
@@ -71,7 +73,8 @@ public sealed class TwitchWebSocket
     {
         if (_stopCts is not null && !_stopCts.IsCancellationRequested)
         {
-            SetStatus(L.T("gui.websocket.disconnecting", "Disconnecting..."));
+            if (!remove || !_miner.Websocket.Sockets.Any(s => s.Index == _idx))
+                SetStatus(L.T("gui.websocket.disconnecting", "Disconnecting..."));
             _stopCts.Cancel();
             try { _ws?.Abort(); } catch { /* уже закрыт */ }
             if (_handleTask is not null)
@@ -80,12 +83,14 @@ public sealed class TwitchWebSocket
             }
             _handleTask = null;
         }
-        SetStatus(L.T("gui.websocket.disconnected", "Disconnected"));
+        if (!remove || !_miner.Websocket.Sockets.Any(s => s.Index == _idx))
+            SetStatus(L.T("gui.websocket.disconnected", "Disconnected"));
         if (remove)
         {
             Topics.Clear();
             _topicsChanged = true;
-            _miner.Ui.RemoveWebsocket(_idx);
+            // строку в интерфейсе убираем, только если этот индекс не занял новый сокет
+            if (!_miner.Websocket.Sockets.Any(s => s.Index == _idx)) _miner.Ui.RemoveWebsocket(_idx);
         }
     }
 
@@ -161,12 +166,17 @@ public sealed class TwitchWebSocket
     private async Task RunConnectionAsync(ClientWebSocket ws, CancellationToken ct)
     {
         var recvTask = ReceiveLoopAsync(ws, ct);
+        Task? wakeTask = null;  // одно ожидание пробуждения, пересоздаётся только после срабатывания
         while (!_reconnectRequested && !ct.IsCancellationRequested)
         {
             await HandlePingAsync(ws, ct);
             await HandleTopicsAsync(ws, ct);
-            _wakeup.Clear();
-            var done = await Task.WhenAny(recvTask, _wakeup.WaitAsync(ct), Task.Delay(1000, ct));
+            if (wakeTask is null || wakeTask.IsCompleted)
+            {
+                _wakeup.Clear();
+                wakeTask = _wakeup.WaitAsync(ct);
+            }
+            var done = await Task.WhenAny(recvTask, wakeTask, Task.Delay(1000, ct));
             if (done == recvTask)
             {
                 await recvTask;  // пробросить исключение, если было

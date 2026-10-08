@@ -65,12 +65,16 @@ public sealed class ImageCache
                 return path;
             }
             var http = _http();
-            if (http is null) return null;
+            if (http is null) { _inflight.TryRemove(url, out _); return null; }
             await _downloads.WaitAsync().ConfigureAwait(false);
             try
             {
                 var r = await http.RequestAsync(HttpMethod.Get, url).ConfigureAwait(false);
-                if (r.Status != 200 || r.Body.Length == 0) return null;
+                if (r.Status != 200 || r.Body.Length == 0)
+                {
+                    _inflight.TryRemove(url, out _);  // попробуем снова при следующем показе
+                    return null;
+                }
                 var tmp = path + ".tmp";
                 await File.WriteAllBytesAsync(tmp, r.Body).ConfigureAwait(false);
                 File.Move(tmp, path, overwrite: true);

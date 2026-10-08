@@ -298,44 +298,6 @@ public sealed partial class Channel : IEquatable<Channel>
         if (needsDisplay) Display();
     }
 
-    private string? _playlistUrl;
-
-    /// <summary>
-    /// «Просмотр» через HLS: берём плейлист самого низкого качества и делаем HEAD последнего сегмента.
-    /// Видео не скачивается. В оригинале этот способ есть, но отключён (_send_watch_playlist).
-    /// </summary>
-    public async Task<bool> SendPlaylistWatchAsync()
-    {
-        if (_stream is null) return false;
-        try
-        {
-            if (_playlistUrl is null)
-            {
-                var tokenResp = await Miner.GqlAsync(Gql.PlaybackAccessToken(Login));
-                var value = tokenResp.Str("data", "streamPlaybackAccessToken", "value");
-                var sig = tokenResp.Str("data", "streamPlaybackAccessToken", "signature");
-                if (value is null || sig is null) return false;
-                var master = await Miner.Http.TryGetStringOnceAsync(
-                    $"https://usher.ttvnw.net/api/channel/hls/{Login}.m3u8?sig={sig}&token={Uri.EscapeDataString(value)}&allow_source=true&player_backend=mediaplayer");
-                var last = master?.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("https://"));
-                if (last is null) return false;
-                _playlistUrl = last;
-            }
-            var playlist = await Miner.Http.TryGetStringOnceAsync(_playlistUrl);
-            if (playlist is null) { _playlistUrl = null; return false; }
-            var segment = playlist.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("https://"));
-            if (segment is null) return false;
-            var head = await Miner.Http.RequestAsync(HttpMethod.Head, segment);
-            return head.Status == 200;
-        }
-        catch (MinerException ex)
-        {
-            Log.Call($"Playlist watch failed for {Login}: {ex.Message}");
-            _playlistUrl = null;
-            return false;
-        }
-    }
-
     /// <summary>Отправка события «минута просмотра» (spade). true — если Twitch ответил 204.</summary>
     public async Task<bool> SendWatchAsync()
     {
@@ -496,6 +458,26 @@ public sealed class TimedDrop
         RealCurrentMinutes = RealCurrentMinutes + delta < RequiredMinutes ? RealCurrentMinutes + delta : RequiredMinutes;
         ExtraCurrentMinutes = 0;
         OnStateChanged();
+    }
+
+    /// <summary>
+    /// Реальные минуты с сайта Twitch для этого дропа (без пересчёта остальных дропов кампании).
+    /// Сбрасывает оценочные минуты. Возвращает true, если что-то изменилось.
+    /// </summary>
+    internal bool SetRealMinutes(int minutes, bool claimed)
+    {
+        minutes = Math.Clamp(minutes, 0, Math.Max(RequiredMinutes, 0));
+        bool changed = minutes != RealCurrentMinutes || ExtraCurrentMinutes != 0;
+        RealCurrentMinutes = minutes;
+        ExtraCurrentMinutes = 0;
+        if (claimed && !IsClaimed)
+        {
+            IsClaimed = true;
+            RealCurrentMinutes = RequiredMinutes;
+            changed = true;
+        }
+        if (changed) OnStateChanged();
+        return changed;
     }
 
     internal bool BumpMinutes(Channel? channel)

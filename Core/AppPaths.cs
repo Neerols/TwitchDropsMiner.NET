@@ -50,33 +50,28 @@ public static class AppPaths
         if (File.Exists(AuthFile) || Directory.Exists(Path.Combine(DataDir, "browser")))
             return $"Data next to the exe was not moved: {DataDir} already has data";
         Directory.CreateDirectory(DataDir);
-        var moved = new List<string>();
+        var dirs = new[] { "config", "browser", "cache" }.Where(n => Directory.Exists(Path.Combine(ExeDir, n))).ToList();
+        var files = new[] { "log.txt", "dump.dat" }.Where(n => File.Exists(Path.Combine(ExeDir, n))).ToList();
         try
         {
-            foreach (var name in new[] { "config", "browser", "cache" })
-            {
-                var src = Path.Combine(ExeDir, name);
-                if (!Directory.Exists(src)) continue;
-                CopyDirectory(src, Path.Combine(DataDir, name));
-                Directory.Delete(src, recursive: true);
-                moved.Add(name);
-            }
-            foreach (var name in new[] { "log.txt", "dump.dat" })
-            {
-                var src = Path.Combine(ExeDir, name);
-                if (!File.Exists(src)) continue;
-                File.Copy(src, Path.Combine(DataDir, name), overwrite: true);
-                File.Delete(src);
-                moved.Add(name);
-            }
-            return moved.Count > 0 ? $"Moved {string.Join(", ", moved)} from {ExeDir} to {DataDir}" : null;
+            // 1) копируем всё; при любой ошибке откатываем копию, исходные данные не трогаем
+            foreach (var name in dirs) CopyDirectory(Path.Combine(ExeDir, name), Path.Combine(DataDir, name));
+            foreach (var name in files) File.Copy(Path.Combine(ExeDir, name), Path.Combine(DataDir, name), overwrite: true);
         }
         catch (Exception ex)
         {
-            return $"Data migration from {ExeDir} failed ({ex.Message}); copied: {string.Join(", ", moved)}";
+            foreach (var name in dirs)
+                try { Directory.Delete(Path.Combine(DataDir, name), recursive: true); } catch { /* уже нет */ }
+            return $"Data migration from {ExeDir} failed, data left in place ({ex.Message})";
         }
+        // 2) всё скопировано — удаляем старое (ошибка удаления не страшна: данные уже на новом месте)
+        foreach (var name in dirs)
+            try { Directory.Delete(Path.Combine(ExeDir, name), recursive: true); } catch { /* файл занят */ }
+        foreach (var name in files)
+            try { File.Delete(Path.Combine(ExeDir, name)); } catch { /* файл занят */ }
+        var moved = dirs.Concat(files).ToList();
+        return moved.Count > 0 ? $"Moved {string.Join(", ", moved)} from {ExeDir} to {DataDir}" : null;
     }
-
     private static void CopyDirectory(string src, string dst)
     {
         Directory.CreateDirectory(dst);

@@ -71,13 +71,19 @@ public static class L
             "берётся со страницы инвентаря Twitch, между проверками он показывается оценочно. Статусы каналов приходят " +
             "по websocket-соединениям Twitch PubSub. Готовые награды забираются автоматически, раз в час список кампаний обновляется.",
         ["x.help.getting_started"] =
-            "1. На вкладке «Главная» нажмите «Открыть страницу активации» и введите показанный код на twitch.tv/activate.\n" +
+            "1. При первом запуске откроется окно входа — войдите в Twitch как обычно (кнопка «Войти через браузер» открывает его снова).\n" +
             "2. Убедитесь, что аккаунт Twitch привязан к нужным играм (ссылка «Все кампании» выше).\n" +
-            "3. Режим «Только список приоритета» добывает только игры из списка «Приоритет». " +
-            "Чтобы добывать всё подряд, выберите режим «Сначала заканчивающиеся» или «Сначала с малым запасом времени».\n" +
-            "4. Список «Приоритет» задаёт порядок: игры сверху добываются первыми.\n" +
+            "3. На вкладке «Настройки» добавьте игры в список «Приоритет» — майнинг начнётся через пару секунд.\n" +
+            "4. Режим «Только список приоритета» добывает только игры из списка. Чтобы добывать всё подряд, " +
+            "выберите «Сначала заканчивающиеся» или «Сначала с малым запасом времени».\n" +
             "5. Список «Исключения» — игры, которые не добываются никогда.\n" +
-            "6. После изменения списков или режима нажмите «Перезагрузить» на вкладке «Настройки».",
+            "6. Не смотрите стримы тем же аккаунтом в обычном браузере, пока работает майнер.",
+        ["x.diag.line"] = "Плеер: {player} · реальный прогресс: {sync}",
+        ["x.diag.hint"] = "Состояние скрытого плеера Twitch и время последней синхронизации реального прогресса со страницы инвентаря Twitch (раз в 5 минут).",
+        ["x.diag.playing"] = "играет",
+        ["x.diag.restarting"] = "перезапуск",
+        ["x.diag.off"] = "выключен",
+        ["x.diag.problem"] = "не играет",
         ["x.settings.catalog"] = "Брать список кампаний из публичного каталога, если Twitch его не отдаёт",
         ["x.settings.catalog_hint"] =
             "С сентября 2026 Twitch не отдаёт список кампаний клиентам, которые входят по коду.\n" +
@@ -179,13 +185,19 @@ public static class L
             "5 minutes and estimated in between. Channel statuses arrive over Twitch PubSub websockets. Finished drops are " +
             "claimed automatically and the campaign list is refreshed every hour.",
         ["x.help.getting_started"] =
-            "1. On the Main tab press \"Open activation page\" and enter the displayed code at twitch.tv/activate.\n" +
+            "1. On first start the login window opens — log in to Twitch as usual (\"Log in with browser\" opens it again).\n" +
             "2. Make sure your Twitch account is linked to the games you want (see the campaigns link above).\n" +
-            "3. \"Priority list only\" mode mines only the games from the Priority list. " +
-            "To mine everything, choose \"Ending soonest\" or \"Low availability first\".\n" +
-            "4. The Priority list sets the order: games at the top are mined first.\n" +
+            "3. On the Settings tab add games to the Priority list — mining starts within a couple of seconds.\n" +
+            "4. \"Priority list only\" mines only the listed games. To mine everything, choose \"Ending soonest\" " +
+            "or \"Low availability first\".\n" +
             "5. The Exclude list contains games that are never mined.\n" +
-            "6. After changing the lists or the mode, press \"Reload\" on the Settings tab.",
+            "6. Do not watch streams with the same account in a regular browser while the miner is running.",
+        ["x.diag.line"] = "Player: {player} · real progress: {sync}",
+        ["x.diag.hint"] = "State of the hidden Twitch player and the time of the last real progress sync from the Twitch inventory page (every 5 minutes).",
+        ["x.diag.playing"] = "playing",
+        ["x.diag.restarting"] = "restarting",
+        ["x.diag.off"] = "off",
+        ["x.diag.problem"] = "not playing",
     };
 
     private static IReadOnlyList<string> LoadLanguageList()

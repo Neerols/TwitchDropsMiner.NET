@@ -89,20 +89,6 @@ public static class Gql
             ["sortTypeIsRecency"] = false,
         });
 
-    /// <summary>Токен доступа к HLS-потоку канала.</summary>
-    public static JsonObject PlaybackAccessToken(string login) => Op(
-        "PlaybackAccessToken",
-        "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9",
-        new JsonObject
-        {
-            ["isLive"] = true,
-            ["isVod"] = false,
-            ["login"] = login,
-            ["platform"] = "web",
-            ["playerType"] = "site",
-            ["vodID"] = "",
-        });
-
     /// <summary>Удалить уведомление на сайте.</summary>
     public static JsonObject NotificationsDelete(string id) => Op(
         "OnsiteNotifications_DeleteNotification",

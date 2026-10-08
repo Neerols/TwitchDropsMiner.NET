@@ -53,17 +53,6 @@ public partial class App : Application
             var arg = e.Args[ai];
             switch (arg)
             {
-                case "--probe":
-                    // диагностика: какие GQL-данные отдаёт Twitch своему сайту на странице инвентаря
-                    _ = Dispatcher.BeginInvoke(async () =>
-                    {
-                        var path = Path.Combine(AppPaths.DataDir, "probe.txt");
-                        var items = await TwitchBrowser.CaptureGqlAsync("https://www.twitch.tv/drops/inventory",
-                            [], TimeSpan.FromSeconds(25), CancellationToken.None);
-                        File.WriteAllText(path, string.Join("\n\n=====\n", items.Select(i => "REQ: " + i.request + "\nRESP: " + i.response)));
-                        _vm?.Print($"Probe: {items.Count} GQL responses -> {path}");
-                    }, DispatcherPriority.ApplicationIdle);
-                    break;
 
                 case "--tray": tray = true; break;
                 case "--log": log = true; break;
