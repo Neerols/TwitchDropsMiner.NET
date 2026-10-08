@@ -37,6 +37,9 @@ public interface IMinerUi
     void BrowserWatch(string? login);
     /// <summary>Проверка и восстановление плеера; возвращает его состояние.</summary>
     Task<string> PlayerTickAsync();
+    /// <summary>Режим плеера: лёгкий (без чата) или полная страница канала.</summary>
+    bool LightPlayer { get; }
+    Task SetLightPlayerAsync(bool light);
     /// <summary>Удалить сессию Twitch из профиля встроенного браузера.</summary>
     Task ClearBrowserSessionAsync();
     /// <summary>Строка диагностики: состояние плеера (null — без изменений) и время последней реальной синхронизации.</summary>

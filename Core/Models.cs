@@ -464,9 +464,12 @@ public sealed class TimedDrop
     /// Реальные минуты с сайта Twitch для этого дропа (без пересчёта остальных дропов кампании).
     /// Сбрасывает оценочные минуты. Возвращает true, если что-то изменилось.
     /// </summary>
-    internal bool SetRealMinutes(int minutes, bool claimed)
+    internal bool SetRealMinutes(int minutes, bool claimed) => SetRealMinutes(minutes, claimed, out _);
+
+    internal bool SetRealMinutes(int minutes, bool claimed, out bool increased)
     {
         minutes = Math.Clamp(minutes, 0, Math.Max(RequiredMinutes, 0));
+        increased = minutes > RealCurrentMinutes;
         bool changed = minutes != RealCurrentMinutes || ExtraCurrentMinutes != 0;
         RealCurrentMinutes = minutes;
         ExtraCurrentMinutes = 0;

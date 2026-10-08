@@ -432,6 +432,7 @@ public sealed class Miner
         Ui.SetTrayIcon(TrayIconState.Active);
         Ui.SetWatching(channel);
         WatchingChannel.Set(channel);
+        if (WatchingChannel.Value is null) _watchingSince = DateTime.UtcNow;
         Ui.BrowserWatch(UseBrowserPlayer ? channel.Login : null);
         if (updateStatus)
         {
@@ -470,17 +471,49 @@ public sealed class Miner
         {
             if (d.Str("id") is not { } id || !_drops.TryGetValue(id, out var drop) || d.At("self") is null) continue;
             // у каждого дропа свои минуты — выставляем напрямую, без «дельты на всю кампанию»
-            if (drop.SetRealMinutes(d.Int("self", "currentMinutesWatched"), d.Bool("self", "isClaimed")))
+            if (drop.SetRealMinutes(d.Int("self", "currentMinutesWatched"), d.Bool("self", "isClaimed"), out bool increased))
                 touched.Add(drop.Campaign);
+            if (increased) _lastRealIncrease = DateTime.UtcNow;
             updated++;
         }
-        foreach (var campaign in touched) campaign.FirstDrop?.Display();
+        // в «Ходе кампании» показываем только ту кампанию, которая добывается на текущем канале
+        if (touched.Count > 0 && GetActiveCampaign()?.FirstDrop is { } active) active.Display();
         _lastRealSync = DateTime.Now;
         Ui.SetDiagnostics(null, _lastRealSync);
         Log.Call(updated == 0 ? "Site inventory: no campaigns in progress" : $"Site inventory: {updated} drops synced");
     }
 
     private DateTime? _lastRealSync;
+    private DateTime _lastRealIncrease = DateTime.UtcNow;
+    private DateTime _watchingSince = DateTime.UtcNow;
+    private static readonly TimeSpan LightPlayerGrace = TimeSpan.FromMinutes(12);
+    private DateTime _lastResourceLog = DateTime.MinValue;
+
+    /// <summary>Самодиагностика раз в 10 минут: память, хендлы, куча GC — чтобы рост был виден в журнале.</summary>
+    private void LogResourceUsage()
+    {
+        if (DateTime.UtcNow - _lastResourceLog < TimeSpan.FromMinutes(10)) return;
+        _lastResourceLog = DateTime.UtcNow;
+        using var p = System.Diagnostics.Process.GetCurrentProcess();
+        Log.Info($"Resources: private {p.PrivateMemorySize64 / 1048576} MB, handles {p.HandleCount}, " +
+                 $"GC heap {GC.GetTotalMemory(false) / 1048576} MB, gen2 GCs {GC.CollectionCount(2)}");
+    }
+
+    /// <summary>
+    /// Страховка лёгкого плеера: если за 12 минут просмотра реальный прогресс ни разу не вырос,
+    /// значит Twitch не засчитывает встраиваемый плеер — переключаемся на полную страницу канала.
+    /// </summary>
+    private async Task CheckLightPlayerAsync()
+    {
+        if (!UseBrowserPlayer || !Ui.LightPlayer) return;
+        var now = DateTime.UtcNow;
+        var since = _lastRealIncrease > _watchingSince ? _lastRealIncrease : _watchingSince;
+        if (now - since < LightPlayerGrace) return;
+        Print(L.T("x.player.fallback", "The lightweight player is not counted by Twitch — switching to the full channel page."));
+        Log.Warning("Light player: no real progress for 12 minutes, switching to the full page");
+        await Ui.SetLightPlayerAsync(false);
+        _watchingSince = now;
+    }
 
     public void RestartWatching()
     {
@@ -534,6 +567,8 @@ public sealed class Miner
                     Ui.SetDiagnostics(state, _lastRealSync);
                 }
                 await SyncSiteProgressAsync(ct);
+                await CheckLightPlayerAsync();
+                LogResourceUsage();
                 if (Progress.MinuteAlmostDone())
                 {
                     await UpdateProgressFallbackAsync(channel);

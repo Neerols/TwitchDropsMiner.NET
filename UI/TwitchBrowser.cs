@@ -288,6 +288,25 @@ public static class TwitchBrowser
     private static readonly SemaphoreSlim _watchLock = new(1, 1);
     private static readonly TimeSpan PlannedReload = TimeSpan.FromHours(3);
 
+    /// <summary>
+    /// Лёгкий режим: встраиваемый плеер player.twitch.tv без чата (в разы меньше памяти и CPU).
+    /// Если Twitch его не засчитывает, ядро переключает на полную страницу канала.
+    /// </summary>
+    public static bool LightPlayer { get; private set; } = true;
+
+    public static async Task SetLightPlayerAsync(bool light)
+    {
+        if (LightPlayer == light) return;
+        LightPlayer = light;
+        await _watchLock.WaitAsync();
+        try { if (_wantedLogin is not null) await ApplyWantedAsync(forceReload: true); }
+        finally { _watchLock.Release(); }
+    }
+
+    private static string PlayerUrl(string login) => LightPlayer
+        ? $"https://player.twitch.tv/?channel={Uri.EscapeDataString(login)}&parent=www.twitch.tv&muted=true&autoplay=true"
+        : $"https://www.twitch.tv/{login}";
+
     /// <summary>Смотреть канал настоящим плеером в скрытом окне (без звука, 160p). null — остановить.</summary>
     public static async Task WatchAsync(string? login)
     {
@@ -333,11 +352,11 @@ public static class TwitchBrowser
             login = _wantedLogin;
             if (login is null) { DestroyPlayer(); return; }
         }
-        _watchView!.CoreWebView2.Navigate($"https://www.twitch.tv/{login}");
+        _watchView!.CoreWebView2.Navigate(PlayerUrl(login));
         _watchLogin = login;
         _loadedAt = DateTime.UtcNow;
         _badTicks = 0;
-        Log.Info($"Browser player: watching {login}");
+        Log.Info($"Browser player: watching {login} ({(LightPlayer ? "light" : "full page")})");
     }
 
     private static void DestroyPlayer()

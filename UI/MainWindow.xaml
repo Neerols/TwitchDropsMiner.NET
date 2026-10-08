@@ -104,7 +104,7 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type ui:BenefitView}">
-                                                    <StackPanel Width="132" Margin="1" ToolTip="{Binding Name}">
+                                                    <StackPanel Width="126" Margin="1" ToolTip="{Binding Name}">
                                                         <Image Source="{Binding Image}" Width="34" Height="34" />
                                                         <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" FontSize="11"
                                                                    FontWeight="SemiBold" MaxHeight="32" LineStackingStrategy="BlockLineHeight" LineHeight="15" TextTrimming="CharacterEllipsis" />

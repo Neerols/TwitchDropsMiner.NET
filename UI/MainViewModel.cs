@@ -548,6 +548,14 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
         }
     }
 
+    public bool LightPlayer => TwitchBrowser.LightPlayer;
+
+    public async Task SetLightPlayerAsync(bool light)
+    {
+        try { await TwitchBrowser.SetLightPlayerAsync(light); }
+        catch (Exception ex) { Log.Warning($"Player mode switch failed: {ex.Message}"); }
+    }
+
     public async Task ClearBrowserSessionAsync()
     {
         try { await TwitchBrowser.ClearSessionAsync(); }
