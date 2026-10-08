@@ -97,6 +97,9 @@ public partial class App : Application
             return;
         }
 
+        // --- перенос данных прежних версий из папки с exe в %LOCALAPPDATA% ---
+        var migration = AppPaths.MigrateFromExeDir();
+
         // --- настройки ---
         Settings settings;
         try
@@ -136,6 +139,7 @@ public partial class App : Application
         _tray.ShowRequested += () => _window.ShowFromTray();
         _tray.QuitRequested += RequestExit;
         if (Log.Level < LogLevel.Error) _vm.Print($"Logging level: {Log.Level}");
+        if (migration is not null) { _vm.Print(migration); Log.Info(migration); }
         if (!settings.StartInTray) _window.Show();
         ListenForShowSignal();
         SessionEnding += (_, _) => { try { settings.Save(); } catch { } RequestExit(); };
