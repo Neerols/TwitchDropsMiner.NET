@@ -1,0 +1,47 @@
+name: Сборка
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Сборка портативной версии
+        run: dotnet publish TwitchDropsMiner.csproj -c Release -r win-x64 --self-contained true -o out/portable
+
+      - name: Сборка компактной версии
+        run: dotnet publish TwitchDropsMiner.csproj -c Release -r win-x64 --self-contained false -o out/framework
+
+      - name: Переименование файлов
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item out/portable/TwitchDropsMiner.exe release/TwitchDropsMiner-portable-win-x64.exe
+          Copy-Item out/framework/TwitchDropsMiner.exe release/TwitchDropsMiner-framework-win-x64.exe
+          Get-ChildItem release | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TwitchDropsMiner-win-x64
+          path: release/*.exe
+
+      - name: Публикация релиза
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          generate_release_notes: true

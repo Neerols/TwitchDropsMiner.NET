@@ -1,0 +1,13 @@
+bin/
+obj/
+dist/
+.vs/
+*.user
+# данные приложения при запуске из папки проекта
+config/
+cache/
+log.txt
+dump.dat
+test-web/
+browser/
+probe.txt

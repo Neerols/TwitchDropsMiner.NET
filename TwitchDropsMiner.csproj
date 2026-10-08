@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms нужен только для NotifyIcon (иконка в трее) -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>TwitchDropsMiner</RootNamespace>
+    <AssemblyName>TwitchDropsMiner</AssemblyName>
+    <ApplicationIcon>Assets\Icons\pickaxe.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <Product>Twitch Drops Miner .NET</Product>
+    <Description>Автоматический сбор Twitch Drops без загрузки видеопотока</Description>
+    <Copyright>MIT. Based on DevilXD/TwitchDropsMiner</Copyright>
+    <!-- Fluent-тема WPF (ThemeMode) помечена как экспериментальная -->
+    <NoWarn>$(NoWarn);WPF0001;WFO0003</NoWarn>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <SatelliteResourceLanguages>en;ru</SatelliteResourceLanguages>
+    <TieredPGO>true</TieredPGO>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <!-- Параметры публикации в один exe-файл -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Icons\*.ico" />
+    <EmbeddedResource Include="Assets\Lang\*.json" LogicalName="Lang.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\Icons\*.ico" LogicalName="Icons.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- WinForms используется только для трея: убираем его неявные using, чтобы не конфликтовать с WPF -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+</Project>
+
