@@ -14,7 +14,7 @@ public sealed class Miner
     public Settings Settings { get; }
     public IMinerUi Ui { get; }
     /// <summary>Клиент Twitch; выбирается при входе и сохраняется вместе с токеном.</summary>
-    public ClientInfo Client { get; set; } = ClientType.SmartBox;
+    public ClientInfo Client { get; set; } = ClientType.Web;
     public AuthState Auth { get; }
     public WebSocketPool Websocket { get; }
     public ProgressTracker Progress { get; } = new();
@@ -44,7 +44,7 @@ public sealed class Miner
     private Task? _watchTask;
     private CancellationTokenSource? _runCts;
     private readonly AsyncEvent _watchingRestart = new();
-    private bool _estimatedWarned;
+
     private Task? _mntTask;
     private CancellationTokenSource? _mntCts;
 
@@ -554,11 +554,7 @@ public sealed class Miner
         // Способ 2: прибавить минуту наиболее вероятной кампании
         if (!handled)
         {
-            if (!_estimatedWarned && Client == ClientType.SmartBox)
-            {
-                _estimatedWarned = true;
-                Print(L.T("x.progress_estimated", "Twitch does not report progress to this client — estimated progress is shown."));
-            }
+
             var active = GetActiveCampaign(channel);
             if (active is not null)
             {
@@ -1031,21 +1027,6 @@ public sealed class Miner
     }
 
     #endregion
-
-    /// <summary>Импорт входа из cookies.jar Python-версии, затем перезапуск майнера.</summary>
-    public async Task ImportLegacyLoginAsync(string path)
-    {
-        try
-        {
-            var result = await Auth.ImportLegacyAsync(path);
-            Print(result);
-            if (Auth.AccessToken is not null && Auth.UserId == 0) ChangeState(MinerState.Restart);
-        }
-        catch (Exception ex)
-        {
-            Print($"Import failed: {ex.Message}");
-        }
-    }
 
     /// <summary>Выход из аккаунта (кнопка на вкладке «Помощь»).</summary>
     public async Task LogoutAsync()

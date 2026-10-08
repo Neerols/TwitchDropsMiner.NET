@@ -92,6 +92,7 @@ public static class L
             "Реальный прогресс раз в 5 минут берётся со страницы инвентаря Twitch.",
         ["x.player_required"] = "Twitch засчитывает просмотр только через свой плеер: войдите через браузер (кнопка «Войти через браузер»), иначе прогресс не пойдёт.",
         ["x.browser.button"] = "Войти через браузер",
+        ["x.login.browser_request"] = "Войдите в Twitch в открывшемся окне (кнопка «Войти через браузер»).",
         ["x.browser.hint"] =
             "Откроется окно twitch.tv (встроенный Microsoft Edge). Войдите как обычно —\n" +
             "логин, пароль и 2FA вводятся только на сайте Twitch, приложение их не видит.",
@@ -152,6 +153,7 @@ public static class L
             "Real progress is read from the Twitch inventory page every 5 minutes.",
         ["x.player_required"] = "Twitch counts watch time only through its player: log in with the browser, otherwise progress will not advance.",
         ["x.browser.button"] = "Log in with browser",
+        ["x.login.browser_request"] = "Log in to Twitch in the opened window (button \"Log in with browser\").",
         ["x.browser.hint"] =
             "Opens twitch.tv in a built-in Microsoft Edge window. Log in as usual —\n" +
             "login, password and 2FA are entered only on the Twitch site, the app never sees them.",

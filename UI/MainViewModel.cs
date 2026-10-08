@@ -50,12 +50,9 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
         ReloadCommand = new RelayCommand(() => Miner.ChangeState(MinerState.InventoryFetch));
         LogoutCommand = new RelayCommand(async () => { LogoutEnabled = false; await Miner.LogoutAsync(); }, _ => LogoutEnabled);
         MinimizeCommand = new RelayCommand(() => MinimizeToTrayAction?.Invoke());
-        OpenActivationCommand = new RelayCommand(() => Util.OpenUrl(DeviceCodeUrl ?? "https://www.twitch.tv/activate"));
-        CopyCodeCommand = new RelayCommand(() => { if (DeviceCode is not null) TrySetClipboard(DeviceCode); });
         OpenLinkCommand = new RelayCommand(p => { if (p is string url && url.Length > 0) Util.OpenUrl(url); });
         RefreshInventoryCommand = new RelayCommand(RefreshInventory);
         OpenDataFolderCommand = new RelayCommand(() => Util.OpenUrl(AppPaths.DataDir));
-        ImportLegacyCommand = new RelayCommand(ImportLegacy);
         BrowserLoginCommand = new RelayCommand(async () => await BrowserLoginAsync());
         ClearLogCommand = new RelayCommand(() => LogLines.Clear());
         CopyLogCommand = new RelayCommand(p =>
@@ -105,10 +102,6 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
     public string LoginStatus { get => _loginStatus; set => Set(ref _loginStatus, value); }
     private string _userIdText = "-";
     public string UserIdText { get => _userIdText; set => Set(ref _userIdText, value); }
-    private string? _deviceCode;
-    public string? DeviceCode { get => _deviceCode; set => Set(ref _deviceCode, value); }
-    private string? _deviceCodeUrl;
-    public string? DeviceCodeUrl { get => _deviceCodeUrl; set => Set(ref _deviceCodeUrl, value); }
     private bool _logoutEnabled;
     public bool LogoutEnabled { get => _logoutEnabled; set { if (Set(ref _logoutEnabled, value)) CommandManager_Invalidate(); } }
 
@@ -134,8 +127,6 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
 
     public RelayCommand SwitchCommand { get; }
     public RelayCommand MinimizeCommand { get; }
-    public RelayCommand OpenActivationCommand { get; }
-    public RelayCommand CopyCodeCommand { get; }
     public RelayCommand ClearLogCommand { get; }
     public RelayCommand CopyLogCommand { get; }
 
@@ -180,11 +171,7 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
         UserIdText = userId?.ToString() ?? "-";
     });
 
-    public void ShowDeviceCode(string? userCode, string? verificationUrl) => OnUi(() =>
-    {
-        DeviceCode = userCode;
-        DeviceCodeUrl = verificationUrl;
-    });
+
 
     public void SetLogoutEnabled(bool enabled) => OnUi(() => LogoutEnabled = enabled);
 
@@ -497,7 +484,6 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
         Print(L.T("x.settings.restart_needed", "The change will take effect after a restart."));
     }
 
-    public RelayCommand ImportLegacyCommand { get; }
     public RelayCommand BrowserLoginCommand { get; }
 
     private bool _browserBusy;
@@ -506,14 +492,14 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
     private async Task BrowserLoginAsync()
     {
         if (_browserBusy) return;
-        if (!TwitchBrowser.IsRuntimeAvailable())
-        {
-            Print(L.T("x.browser.no_runtime", "Microsoft Edge WebView2 Runtime is not installed: https://go.microsoft.com/fwlink/p/?LinkId=2124703"));
-            return;
-        }
         _browserBusy = true;
         try
         {
+            if (!TwitchBrowser.IsRuntimeAvailable())
+            {
+                Print(L.T("x.browser.no_runtime", "Microsoft Edge WebView2 Runtime is not installed: https://go.microsoft.com/fwlink/p/?LinkId=2124703"));
+                return;
+            }
             Print(L.T("x.browser.opened", "Log in to Twitch in the opened window."));
             var result = await TwitchBrowser.LoginAsync(Application.Current.MainWindow);
             if (result is not { } r)
@@ -537,6 +523,9 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
         catch (Exception ex) { Log.Warning($"Browser player failed: {ex.Message}"); }
     });
 
+    /// <summary>Открыть окно входа через браузер (вызывается ядром, когда вход не выполнен).</summary>
+    public void RequestBrowserLogin() => OnUi(async () => await BrowserLoginAsync());
+
     public async Task<string?> BrowserPlayerStateAsync() => await TwitchBrowser.PlayerStateAsync();
 
     public async Task<System.Text.Json.Nodes.JsonNode?> FetchSiteInventoryAsync(CancellationToken ct)
@@ -559,16 +548,6 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
         }
     }
 
-    private void ImportLegacy()
-    {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = L.T("x.import.button", "Import login from the Python version"),
-            Filter = "cookies.jar|cookies.jar|*.*|*.*",
-            FileName = "cookies.jar",
-        };
-        if (dlg.ShowDialog() == true) _ = Miner.ImportLegacyLoginAsync(dlg.FileName);
-    }
 
     public string DataDir => AppPaths.DataDir;
     public RelayCommand OpenDataFolderCommand { get; }

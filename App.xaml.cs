@@ -47,7 +47,7 @@ public partial class App : Application
         // --- аргументы ---
         bool tray = false, log = false, dump = false;
         int verbose = 0;
-        string? importCookies = null;
+
         for (int ai = 0; ai < e.Args.Length; ai++)
         {
             var arg = e.Args[ai];
@@ -64,9 +64,7 @@ public partial class App : Application
                         _vm?.Print($"Probe: {items.Count} GQL responses -> {path}");
                     }, DispatcherPriority.ApplicationIdle);
                     break;
-                case "--import-cookies" when ai + 1 < e.Args.Length:
-                    importCookies = e.Args[++ai];
-                    break;
+
                 case "--tray": tray = true; break;
                 case "--log": log = true; break;
                 case "--dump": dump = true; break;
@@ -142,7 +140,7 @@ public partial class App : Application
         ListenForShowSignal();
         SessionEnding += (_, _) => { try { settings.Save(); } catch { } RequestExit(); };
 
-        _ = RunMinerAsync(importCookies);
+        _ = RunMinerAsync();
     }
 
     private void ListenForShowSignal()
@@ -161,11 +159,11 @@ public partial class App : Application
 
     private void RequestExit() => _vm?.Miner.Close();
 
-    private async Task RunMinerAsync(string? importCookies)
+    private async Task RunMinerAsync()
     {
         try
         {
-            if (importCookies is not null) await _vm!.Miner.ImportLegacyLoginAsync(importCookies);
+
             await _vm!.Miner.RunAsync();
         }
         catch (Exception ex)

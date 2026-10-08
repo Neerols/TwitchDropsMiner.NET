@@ -30,10 +30,20 @@ public static class TwitchBrowser
         _env ??= await CoreWebView2Environment.CreateAsync(null, ProfileDir,
             new CoreWebView2EnvironmentOptions(BrowserArgs));
 
+    /// <summary>Есть ли WebView2 Runtime. Другие ошибки не маскируются под «не установлен».</summary>
     public static bool IsRuntimeAvailable()
     {
-        try { return !string.IsNullOrEmpty(CoreWebView2Environment.GetAvailableBrowserVersionString()); }
-        catch { return false; }
+        try
+        {
+            var version = CoreWebView2Environment.GetAvailableBrowserVersionString();
+            if (string.IsNullOrEmpty(version)) return false;
+            Log.Info($"WebView2 Runtime {version}");
+            return true;
+        }
+        catch (WebView2RuntimeNotFoundException)
+        {
+            return false;
+        }
     }
 
     private static async Task<(Window window, WebView2 view)> CreateAsync(bool visible, Window? owner)

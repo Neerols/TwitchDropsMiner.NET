@@ -243,24 +243,7 @@
                                         <WrapPanel Margin="0,6,0,0">
                                             <Button Content="{ui:Tr x.browser.button}" Command="{Binding BrowserLoginCommand}"
                                                     Style="{StaticResource AccentButtonStyle}" Margin="0,0,6,6" ToolTip="{ui:Tr x.browser.hint}" />
-                                            <Button Content="{ui:Tr x.import.button}" Command="{Binding ImportLegacyCommand}"
-                                                    Margin="0,0,6,6" ToolTip="{ui:Tr x.import.hint}" />
                                         </WrapPanel>
-                                        <Border Margin="0,2,0,0" Padding="8" CornerRadius="6" BorderThickness="1"
-                                                BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
-                                                Visibility="{Binding DeviceCode, Converter={StaticResource NullToCollapsed}}">
-                                            <StackPanel>
-                                                <TextBlock Text="{ui:Tr x.login.code_title}" />
-                                                <TextBox Text="{Binding DeviceCode, Mode=OneWay}" IsReadOnly="True" FontSize="26"
-                                                         FontFamily="Cascadia Mono, Consolas" FontWeight="Bold" HorizontalContentAlignment="Center" Margin="0,4" />
-                                                <TextBlock Text="{ui:Tr x.login.code_hint}" TextWrapping="Wrap" Opacity="0.8" />
-                                                <WrapPanel Margin="0,6,0,0">
-                                                    <Button Content="{ui:Tr x.login.open_page}" Command="{Binding OpenActivationCommand}"
-                                                            Style="{StaticResource AccentButtonStyle}" Margin="0,0,6,6" />
-                                                    <Button Content="{ui:Tr x.login.copy_code}" Command="{Binding CopyCodeCommand}" Margin="0,0,6,6" />
-                                                </WrapPanel>
-                                            </StackPanel>
-                                        </Border>
                                     </StackPanel>
                                 </GroupBox>
 

@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace TwitchDropsMiner.Core;
 
 /// <summary>
-/// Состояние авторизации. Вход — через OAuth Device Code Flow (код вводится на twitch.tv/activate).
+/// Состояние авторизации. Вход — только через встроенный браузер (сессия twitch.tv, веб-клиент).
 /// Токен хранится в config/auth.bin, зашифрованный DPAPI (доступен только текущему пользователю Windows).
 /// </summary>
 public sealed class AuthState(Miner miner)
@@ -144,7 +144,7 @@ public sealed class AuthState(Miner miner)
 
     /// <summary>
     /// Результат входа через встроенный браузер: cookie auth-token и unique_id с twitch.tv.
-    /// Если идёт вход по коду — завершает его; иначе сохраняет новый вход и перезапускает майнер.
+    /// Если майнер ждёт входа — завершает ожидание; иначе сохраняет новый вход и перезапускает майнер.
     /// </summary>
     public void SubmitBrowserLogin(string token, string? deviceId, string userAgent)
     {
@@ -181,21 +181,14 @@ public sealed class AuthState(Miner miner)
         }
         var http = miner.Http;
         var stored = LoadStored();
-        // токен привязан к клиенту, которым он получен
-        if (AccessToken is null && ClientType.ById(stored.ClientId) is { } storedClient)
-            miner.Client = ClientType.IsWeb(storedClient) ? storedClient.WithUserAgent(stored.UserAgent) : storedClient;
-        var client = miner.Client;
-        if (DeviceId is null)
+        // Работает только вход через браузер: токены других клиентов (вход по коду, импорт) игнорируем
+        if (AccessToken is null && !ClientType.IsWeb(ClientType.ById(stored.ClientId) ?? ClientType.Web))
         {
-            DeviceId = stored.DeviceId;
-            if (DeviceId is null)
-            {
-                // запрос главной страницы выставляет cookie unique_id — это и есть device id
-                await http.RequestAsync(HttpMethod.Get, client.ClientUrl.ToString(), headers: h => ApplyHeaders(h, false));
-                DeviceId = http.GetCookie(client.ClientUrl, "unique_id") ?? Util.Nonce(Util.CharsHexLower, 32);
-            }
-            http.SetCookie(".twitch.tv", "unique_id", DeviceId);
+            Log.Info("Saved login is not a browser login, a new browser login is required");
+            stored = new(null, null, null, null);
         }
+        if (AccessToken is null) miner.Client = ClientType.Web.WithUserAgent(stored.UserAgent);
+        DeviceId ??= stored.DeviceId;
 
         if (AccessToken is null || UserId == 0)
         {
@@ -203,160 +196,56 @@ public sealed class AuthState(Miner miner)
             miner.Ui.SetLoginStatus(L.T("gui.login.logging_in", "Logging in..."), null);
             AccessToken ??= stored.AccessToken;
             JsonNode? validate = null;
-            for (int clientMismatch = 0; clientMismatch < 2 && validate is null; clientMismatch++)
+            for (int attempt = 0; attempt < 3 && validate is null; attempt++)
             {
-                for (int invalidToken = 0; invalidToken < 2; invalidToken++)
+                if (AccessToken is null)
+                    AccessToken = await BrowserLoginAsync();
+                else
+                    Log.Info("Restoring session from saved token");
+                var token = AccessToken;
+                var (status, json) = await http.RequestJsonAsync(HttpMethod.Get, "https://id.twitch.tv/oauth2/validate",
+                    headers: h => h.TryAddWithoutValidation("Authorization", $"OAuth {token}"));
+                if (status == 200 && json.Str("client_id") == ClientType.Web.ClientId)
                 {
-                    if (AccessToken is null)
-                        AccessToken = await DeviceCodeLoginAsync();
-                    else
-                        Log.Info("Restoring session from saved token");
-                    var token = AccessToken;
-                    var (status, json) = await http.RequestJsonAsync(HttpMethod.Get, "https://id.twitch.tv/oauth2/validate",
-                        headers: h => h.TryAddWithoutValidation("Authorization", $"OAuth {token}"));
-                    if (status == 401)
-                    {
-                        Log.Info("Restored session is invalid");
-                        AccessToken = null;
-                        continue;
-                    }
-                    if (status == 200) { validate = json; break; }
-                    throw new MinerException($"Login verification failure (HTTP {status})");
+                    validate = json;
+                    break;
                 }
-                if (validate is null) throw new MinerException("Login verification failure (step #2)");
-                var tokenClientId = validate.Str("client_id");
-                if (tokenClientId != miner.Client.ClientId)
-                {
-                    if (ClientType.ById(tokenClientId) is { } known)
-                    {
-                        // токен выдан другому известному клиенту — просто переключаемся на него
-                        miner.Client = ClientType.IsWeb(known) ? known.WithUserAgent(stored.UserAgent) : known;
-                    }
-                    else
-                    {
-                        // неизвестный клиент — нужен новый вход
-                        Log.Info("Token client ID mismatch");
-                        AccessToken = null;
-                        validate = null;
-                    }
-                }
+                if (status is not (200 or 401)) throw new MinerException($"Login verification failure (HTTP {status})");
+                // токен недействителен или выдан не веб-клиенту — нужен новый вход
+                Log.Info("Saved session is invalid");
+                AccessToken = null;
             }
-            if (validate is null) throw new MinerException("Login verification failure (step #1)");
+            if (validate is null) throw new MinerException("Login verification failure");
             UserId = validate.Long("user_id");
+            if (DeviceId is null)
+            {
+                await http.RequestAsync(HttpMethod.Get, miner.Client.ClientUrl.ToString(), headers: h => ApplyHeaders(h, false));
+                DeviceId = http.GetCookie(miner.Client.ClientUrl, "unique_id") ?? Util.Nonce(Util.CharsHexLower, 32);
+            }
             http.SetCookie(".twitch.tv", "auth-token", AccessToken!);
-            if (DeviceId is not null) http.SetCookie(".twitch.tv", "unique_id", DeviceId);
+            http.SetCookie(".twitch.tv", "unique_id", DeviceId);
             SaveStored();
             Log.Info($"Login successful, user ID: {UserId}");
             miner.Ui.SetLoginStatus(L.T("gui.login.logged_in", "Logged in"), UserId);
         }
-        miner.Ui.ShowDeviceCode(null, null);
         miner.Ui.SetLogoutEnabled(true);
         _loggedIn.Set();
     }
 
-    private void OAuthHeaders(HttpRequestHeaders h)
+    /// <summary>Ждём входа через встроенный браузер (окно открывается автоматически).</summary>
+    private async Task<string> BrowserLoginAsync()
     {
-        var c = miner.Client;
-        var origin = c.ClientUrl.ToString().TrimEnd('/');
-        h.TryAddWithoutValidation("Accept", "application/json");
-        h.TryAddWithoutValidation("Accept-Language", "en-US");
-        h.TryAddWithoutValidation("Cache-Control", "no-cache");
-        h.TryAddWithoutValidation("Client-Id", c.ClientId);
-        h.TryAddWithoutValidation("Origin", origin);
-        h.TryAddWithoutValidation("Pragma", "no-cache");
-        h.TryAddWithoutValidation("Referer", origin);
-        h.TryAddWithoutValidation("X-Device-Id", DeviceId);
-    }
-
-    /// <summary>OAuth Device Code Flow: получаем код, показываем его пользователю и ждём подтверждения.</summary>
-    private async Task<string> DeviceCodeLoginAsync()
-    {
-        var http = miner.Http;
         _browserLogin = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        var browser = _browserLogin.Task;
-        var candidates = ClientType.Candidates.OrderBy(c => c.ClientId == miner.Client.ClientId ? 0 : 1).ToList();
-        int candidate = 0;
-        while (true)
-        {
-            try
-            {
-                miner.Client = candidates[candidate];
-                var clientId = miner.Client.ClientId;
-                var now = DateTimeOffset.UtcNow;
-                var (status, resp) = await http.RequestJsonAsync(HttpMethod.Post, "https://id.twitch.tv/oauth2/device",
-                    () => new FormUrlEncodedContent([new("client_id", clientId), new("scopes", "")]), OAuthHeaders);
-                if (status == 400 && resp.Str("message") == "invalid client" && candidate + 1 < candidates.Count)
-                {
-                    // Twitch больше не принимает этот клиент для входа по коду — пробуем следующий
-                    Log.Warning($"Client {clientId} rejected for device login, trying another client");
-                    candidate++;
-                    continue;
-                }
-                var deviceCode = resp.Str("device_code")
-                    ?? throw new MinerException($"Device login failed: HTTP {status} {resp?.ToJsonString()}");
-                var userCode = resp.Str("user_code") ?? "";
-                var interval = Math.Max(1, resp.Int("interval"));
-                var verificationUri = resp.Str("verification_uri") ?? "https://www.twitch.tv/activate";
-                var expiresAt = now.AddSeconds(resp.Int("expires_in"));
-
-                miner.Ui.SetLoginStatus(L.T("gui.login.required", "Login required"), null);
-                miner.Ui.SetStatus(L.T("gui.login.required", "Login required"));
-                miner.Ui.ShowDeviceCode(userCode, verificationUri);
-                miner.Ui.GrabAttention();
-                miner.Print(L.T("gui.login.request", "Please log in to continue."));
-                miner.Print(L.F("x.login.code_print", null, ("code", userCode)));
-
-                while (true)
-                {
-                    await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(interval), miner.Token), browser);
-                    miner.Token.ThrowIfCancellationRequested();
-                    if (browser.IsCompleted)
-                    {
-                        // пользователь вошёл через встроенный браузер
-                        var (bToken, bDevice, bUa) = browser.Result;
-                        miner.Client = ClientType.Web.WithUserAgent(bUa);
-                        if (bDevice is not null) DeviceId = bDevice;
-                        miner.Ui.ShowDeviceCode(null, null);
-                        return bToken;
-                    }
-                    var (tokenStatus, tokenResp) = await http.RequestJsonAsync(HttpMethod.Post, "https://id.twitch.tv/oauth2/token",
-                        () => new FormUrlEncodedContent([
-                            new("client_id", clientId),
-                            new("device_code", deviceCode),
-                            new("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                        ]), OAuthHeaders, expiresAt);
-                    // 200 — успех, 400 — пользователь ещё не ввёл код
-                    if (tokenStatus != 200) continue;
-                    miner.Ui.ShowDeviceCode(null, null);
-                    return tokenResp.Str("access_token") ?? throw new MinerException("No access_token in response");
-                }
-            }
-            catch (RequestInvalidException)
-            {
-                // срок действия кода истёк — запрашиваем новый
-            }
-        }
-    }
-
-    /// <summary>
-    /// Импорт входа из cookies.jar Python-версии. Токен проверяется через oauth2/validate и сохраняется
-    /// только если Twitch его принял. Возвращает текст результата для журнала.
-    /// </summary>
-    public async Task<string> ImportLegacyAsync(string path)
-    {
-        var (token, deviceId) = LegacyCookies.Read(path);
-        if (token is null) return L.T("x.import.no_token", "No auth-token found in this file.");
-        var (status, json) = await miner.Http.RequestJsonAsync(HttpMethod.Get, "https://id.twitch.tv/oauth2/validate",
-            headers: h => h.TryAddWithoutValidation("Authorization", $"OAuth {token}"));
-        if (status != 200) return L.F("x.import.invalid", "The token from this file is not valid (HTTP {status}).", ("status", status));
-        var client = ClientType.ById(json.Str("client_id"));
-        if (client is null) return L.F("x.import.unknown_client", "Unknown Twitch client: {client}", ("client", json.Str("client_id")));
-        miner.Client = client;
-        AccessToken = token;
-        DeviceId = deviceId ?? DeviceId;
-        UserId = 0;  // заново проверится при перезапуске
-        SaveStored();
-        return L.F("x.import.ok", "Login imported (user ID {user}), restarting...", ("user", json.Long("user_id")));
+        miner.Ui.SetLoginStatus(L.T("gui.login.required", "Login required"), null);
+        miner.Ui.SetStatus(L.T("gui.login.required", "Login required"));
+        miner.Ui.GrabAttention();
+        miner.Print(L.T("x.login.browser_request", "Log in to Twitch in the opened window (button \"Log in with browser\")."));
+        miner.Ui.RequestBrowserLogin();
+        var (token, deviceId, userAgent) = await _browserLogin.Task.WaitAsync(miner.Token);
+        miner.Client = ClientType.Web.WithUserAgent(userAgent);
+        if (deviceId is not null) DeviceId = deviceId;
+        IntegrityToken = null;
+        return token;
     }
 
     /// <summary>Выход: отзыв токена на стороне Twitch и удаление сохранённой авторизации.</summary>

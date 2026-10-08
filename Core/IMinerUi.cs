@@ -12,8 +12,8 @@ public interface IMinerUi
     void RemoveWebsocket(int index);
 
     void SetLoginStatus(string status, long? userId);
-    /// <summary>Показать код активации устройства (null — скрыть).</summary>
-    void ShowDeviceCode(string? userCode, string? verificationUrl);
+    /// <summary>Открыть окно входа через встроенный браузер.</summary>
+    void RequestBrowserLogin();
     void SetLogoutEnabled(bool enabled);
     void GrabAttention();
 
