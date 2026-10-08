@@ -48,7 +48,15 @@ public sealed class MainViewModel : ObservableObject, IMinerUi
 
         SwitchCommand = new RelayCommand(() => Miner.ChangeState(MinerState.ChannelSwitch), _ => SelectedChannel is not null);
         ReloadCommand = new RelayCommand(() => Miner.ChangeState(MinerState.InventoryFetch));
-        LogoutCommand = new RelayCommand(async () => { LogoutEnabled = false; await Miner.LogoutAsync(); }, _ => LogoutEnabled);
+        LogoutCommand = new RelayCommand(async () =>
+        {
+            var answer = MessageBox.Show(
+                L.T("x.logout.confirm", "Log out of Twitch? The session will be revoked and you will need to log in again."),
+                "Twitch Drops Miner", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes) return;
+            LogoutEnabled = false;
+            await Miner.LogoutAsync();
+        }, _ => LogoutEnabled);
         MinimizeCommand = new RelayCommand(() => MinimizeToTrayAction?.Invoke());
         OpenLinkCommand = new RelayCommand(p => { if (p is string url && url.Length > 0) Util.OpenUrl(url); });
         RefreshInventoryCommand = new RelayCommand(RefreshInventory);

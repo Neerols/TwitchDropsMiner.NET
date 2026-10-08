@@ -79,6 +79,9 @@ public static class L
             "5. Список «Исключения» — игры, которые не добываются никогда.\n" +
             "6. Не смотрите стримы тем же аккаунтом в обычном браузере, пока работает майнер.",
         ["x.diag.line"] = "Плеер: {player} · реальный прогресс: {sync}",
+        ["x.logout.button"] = "Выйти",
+        ["x.logout.hint"] = "Выйти из аккаунта Twitch: сессия будет отозвана и удалена из встроенного браузера.",
+        ["x.logout.confirm"] = "Выйти из аккаунта Twitch? Сессия будет отозвана, потребуется войти заново.",
         ["x.diag.hint"] = "Состояние скрытого плеера Twitch и время последней синхронизации реального прогресса со страницы инвентаря Twitch (раз в 5 минут).",
         ["x.diag.playing"] = "играет",
         ["x.diag.restarting"] = "перезапуск",
@@ -193,6 +196,9 @@ public static class L
             "5. The Exclude list contains games that are never mined.\n" +
             "6. Do not watch streams with the same account in a regular browser while the miner is running.",
         ["x.diag.line"] = "Player: {player} · real progress: {sync}",
+        ["x.logout.button"] = "Log out",
+        ["x.logout.hint"] = "Log out of Twitch: the session is revoked and removed from the built-in browser.",
+        ["x.logout.confirm"] = "Log out of Twitch? The session will be revoked and you will need to log in again.",
         ["x.diag.hint"] = "State of the hidden Twitch player and the time of the last real progress sync from the Twitch inventory page (every 5 minutes).",
         ["x.diag.playing"] = "playing",
         ["x.diag.restarting"] = "restarting",

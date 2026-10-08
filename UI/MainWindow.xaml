@@ -18,6 +18,7 @@
         <ui:StatusBrushConverter x:Key="StatusBrush" />
         <ui:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <ui:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
 
         <!-- Секция-«карточка» вместо стандартного GroupBox -->
         <Style x:Key="Section" TargetType="GroupBox">
@@ -79,7 +80,7 @@
                         <TextBlock Text="{Binding GameName}" FontWeight="Bold" FontSize="14" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Name}" Opacity="0.9" TextWrapping="Wrap" FontSize="13" />
                         <TextBlock Text="{Binding StatusText}" FontSize="13" Foreground="{Binding StatusKind, Converter={StaticResource StatusBrush}}" />
-                        <TextBlock Text="{Binding TimeText}" ToolTip="{Binding TimeTooltip}" FontSize="12" Opacity="0.85" />
+                        <TextBlock Text="{Binding TimeText}" ToolTip="{Binding TimeTooltip}" FontSize="12" Opacity="0.85" TextWrapping="Wrap" />
                         <TextBlock FontSize="12">
                             <Hyperlink Command="{Binding DataContext.OpenLinkCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                        CommandParameter="{Binding LinkUrl}"
@@ -94,7 +95,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type ui:DropView}">
-                                <Border x:Name="DropCard" CornerRadius="5" BorderThickness="1" Padding="5" Margin="0,0,5,5" Width="134"
+                                <Border x:Name="DropCard" CornerRadius="5" BorderThickness="1" Padding="5" Margin="0,0,5,5" Width="142"
                                         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
                                     <StackPanel>
                                         <ItemsControl ItemsSource="{Binding Benefits}" HorizontalAlignment="Center">
@@ -103,10 +104,10 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type ui:BenefitView}">
-                                                    <StackPanel Width="124" Margin="1" ToolTip="{Binding Name}">
+                                                    <StackPanel Width="132" Margin="1" ToolTip="{Binding Name}">
                                                         <Image Source="{Binding Image}" Width="34" Height="34" />
-                                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" FontSize="11.5"
-                                                                   FontWeight="SemiBold" MaxHeight="30" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" FontSize="11"
+                                                                   FontWeight="SemiBold" MaxHeight="32" LineStackingStrategy="BlockLineHeight" LineHeight="15" TextTrimming="CharacterEllipsis" />
                                                     </StackPanel>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -243,8 +244,13 @@
                                         <TextBlock Text="{Binding Diagnostics}" Opacity="0.75" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"
                                                    ToolTip="{ui:Tr x.diag.hint}" />
                                         <WrapPanel Margin="0,6,0,0">
+                                            <!-- не вошли: войти через браузер; вошли: выйти -->
                                             <Button Content="{ui:Tr x.browser.button}" Command="{Binding BrowserLoginCommand}"
-                                                    Style="{StaticResource AccentButtonStyle}" Margin="0,0,6,6" ToolTip="{ui:Tr x.browser.hint}" />
+                                                    Style="{StaticResource AccentButtonStyle}" Margin="0,0,6,6" ToolTip="{ui:Tr x.browser.hint}"
+                                                    Visibility="{Binding LogoutEnabled, Converter={StaticResource InverseBoolToVis}}" />
+                                            <Button Content="{ui:Tr x.logout.button}" Command="{Binding LogoutCommand}"
+                                                    Margin="0,0,6,6" ToolTip="{ui:Tr x.logout.hint}"
+                                                    Visibility="{Binding LogoutEnabled, Converter={StaticResource BoolToVis}}" />
                                         </WrapPanel>
                                     </StackPanel>
                                 </GroupBox>
@@ -648,10 +654,6 @@
                                 <TextBox Text="{Binding DataDir, Mode=OneWay}" IsReadOnly="True" Margin="0,0,8,0" />
                             </DockPanel>
                         </GroupBox>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="4,8">
-                            <TextBlock Text="{ui:Tr gui.help.invalidate.text, Default=Invalidate the authentication token (log out):}" VerticalAlignment="Center" Margin="0,0,10,0" />
-                            <Button Content="{ui:Tr gui.help.invalidate.button, Default=Invalidate}" Command="{Binding LogoutCommand}" Padding="16,4" />
-                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
